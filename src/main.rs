@@ -2,16 +2,23 @@ use bevy::{app::AppExit, prelude::*, winit::WinitSettings};
 #[cfg(feature = "inspector")]
 use bevy_inspector_egui::WorldInspectorPlugin;
 
-#[derive(Component)]
+#[derive(Component, Deref)]
+struct ButtonPos(usize);
+
+#[derive(Clone, Component)]
 enum Action {
+    Menu(Menu),
+    Back,
     Quit,
 }
 
+#[derive(Clone)]
 struct MenuButton {
     text: String,
     action: Action,
 }
 
+#[derive(Clone)]
 struct Menu {
     title: String,
     buttons: Vec<MenuButton>,
@@ -37,7 +44,19 @@ const BUTTON_TEXT_SIZE: f32 = 50.;
 const BUTTON_TEXT_COLOR: Color = Color::BLACK;
 
 impl Menu {
-    fn spawn(self, commands: &mut Commands, asset_server: &AssetServer) {
+    fn menu_at(&self, mut pos: Vec<usize>) -> &Menu {
+        if pos.is_empty() {
+            self
+        } else {
+            if let Action::Menu(menu) = &self.buttons[pos.remove(0)].action {
+                menu.menu_at(pos)
+            } else {
+                panic!("Menu pos does not point to a menu");
+            }
+        }
+    }
+
+    fn spawn(&self, commands: &mut Commands, asset_server: &AssetServer) -> Entity {
         commands
             .spawn_bundle(NodeBundle {
                 style: Style {
@@ -59,7 +78,7 @@ impl Menu {
                         ..default()
                     },
                     text: Text::with_section(
-                        self.title,
+                        self.title.clone(),
                         TextStyle {
                             font: font.clone(),
                             font_size: MENU_TITLE_SIZE,
@@ -70,7 +89,7 @@ impl Menu {
                     ..default()
                 });
 
-                for button in self.buttons {
+                for (pos, button) in self.buttons.iter().enumerate() {
                     parent
                         .spawn_bundle(ButtonBundle {
                             style: Style {
@@ -83,11 +102,12 @@ impl Menu {
                             color: BUTTON_COLOR.into(),
                             ..default()
                         })
-                        .insert(button.action)
+                        .insert(button.action.clone())
+                        .insert(ButtonPos(pos))
                         .with_children(|parent| {
                             parent.spawn_bundle(TextBundle {
                                 text: Text::with_section(
-                                    button.text,
+                                    button.text.clone(),
                                     TextStyle {
                                         font: font.clone(),
                                         font_size: BUTTON_TEXT_SIZE,
@@ -99,17 +119,56 @@ impl Menu {
                             });
                         });
                 }
-            });
+            })
+            .id()
     }
+}
+
+struct CurrMenu {
+    menu: Menu,
+    menu_e: Entity,
+    pos: Vec<usize>,
+}
+
+impl CurrMenu {
+    fn nav(&mut self, nav_menu: &NavMenu, commands: &mut Commands, asset_server: &AssetServer) {
+        commands.entity(self.menu_e).despawn_recursive();
+
+        match nav_menu {
+            NavMenu::Fore(pos) => {
+                self.pos.push(*pos);
+            }
+            NavMenu::Back => {
+                self.pos.pop();
+            }
+        }
+
+        self.menu_e = self
+            .menu
+            .menu_at(self.pos.clone())
+            .spawn(commands, asset_server);
+    }
+}
+
+#[derive(Deref)]
+struct SpawnMenu(Menu);
+
+enum NavMenu {
+    Fore(usize),
+    Back,
 }
 
 fn main() {
     let mut app = App::new();
     app.add_plugins(DefaultPlugins)
+        .add_event::<SpawnMenu>()
+        .add_event::<NavMenu>()
         .insert_resource(ClearColor(Color::BLACK))
         .insert_resource(WinitSettings::desktop_app())
         .add_startup_system(init)
-        .add_system(ui_action);
+        .add_system(button_action)
+        .add_system(nav_menu)
+        .add_system(spawn_menu);
 
     #[cfg(feature = "inspector")]
     app.add_plugin(WorldInspectorPlugin::new());
@@ -117,15 +176,31 @@ fn main() {
     app.run();
 }
 
-fn init(mut commands: Commands, asset_server: Res<AssetServer>) {
+fn init(mut commands: Commands, mut spawn_menus: EventWriter<SpawnMenu>) {
     commands.spawn_bundle(UiCameraBundle::default());
 
-    Menu {
+    spawn_menus.send(SpawnMenu(Menu {
         title: "voxmod".to_string(),
         buttons: vec![
             MenuButton {
                 text: "Play".to_string(),
-                action: Action::Quit,
+                action: Action::Menu(Menu {
+                    title: "Choose a world".to_string(),
+                    buttons: vec![
+                        MenuButton {
+                            text: "World 1".to_string(),
+                            action: Action::Quit,
+                        },
+                        MenuButton {
+                            text: "World 2".to_string(),
+                            action: Action::Quit,
+                        },
+                        MenuButton {
+                            text: "Back".to_string(),
+                            action: Action::Back,
+                        },
+                    ],
+                }),
             },
             MenuButton {
                 text: "Edit".to_string(),
@@ -136,21 +211,53 @@ fn init(mut commands: Commands, asset_server: Res<AssetServer>) {
                 action: Action::Quit,
             },
         ],
-    }
-    .spawn(&mut commands, &asset_server);
+    }));
 }
 
-fn ui_action(
+fn spawn_menu(
+    mut commands: Commands,
+    mut spawn_menus: EventReader<SpawnMenu>,
+    asset_server: Res<AssetServer>,
+) {
+    for spawn_menu in spawn_menus.iter() {
+        let menu_e = spawn_menu.spawn(&mut commands, &asset_server);
+        commands.insert_resource(CurrMenu {
+            menu: (**spawn_menu).clone(),
+            menu_e,
+            pos: Vec::default(),
+        })
+    }
+}
+
+fn nav_menu(
+    mut commands: Commands,
+    mut nav_menus: EventReader<NavMenu>,
+    mut curr_menu: Option<ResMut<CurrMenu>>,
+    asset_server: Res<AssetServer>,
+) {
+    for nav_menu in nav_menus.iter() {
+        if let Some(curr_menu) = &mut curr_menu {
+            curr_menu.nav(nav_menu, &mut commands, &asset_server);
+        } else {
+            panic!("Attempted to navigate menu when no menu was open");
+        }
+    }
+}
+
+fn button_action(
     mut app_exits: EventWriter<AppExit>,
+    mut nav_menus: EventWriter<NavMenu>,
     mut interactions: Query<
-        (&Interaction, &mut UiColor, &Action),
+        (&Interaction, &mut UiColor, &Action, &ButtonPos),
         (Changed<Interaction>, With<Button>),
     >,
 ) {
-    for (interaction, mut color, action) in interactions.iter_mut() {
+    for (interaction, mut color, action, pos) in interactions.iter_mut() {
         *color = match interaction {
             Interaction::Clicked => {
                 match action {
+                    Action::Menu(_) => nav_menus.send(NavMenu::Fore(**pos)),
+                    Action::Back => nav_menus.send(NavMenu::Back),
                     Action::Quit => app_exits.send(AppExit),
                 }
                 BUTTON_PRESS_COLOR
