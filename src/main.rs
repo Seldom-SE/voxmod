@@ -1,15 +1,21 @@
-use bevy::{app::AppExit, prelude::*, winit::WinitSettings};
+use bevy::{app::AppExit, prelude::*};
 #[cfg(feature = "inspector")]
 use bevy_inspector_egui::WorldInspectorPlugin;
 
-#[derive(Component, Deref)]
-struct ButtonPos(usize);
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+enum GameState {
+    MainMenu,
+    Menu,
+    Buffer,
+}
+
+#[derive(Deref)]
+struct BufferedState(GameState);
 
 #[derive(Clone, Component)]
 enum Action {
     Menu(Menu),
     Back,
-    Quit,
 }
 
 #[derive(Clone)]
@@ -44,18 +50,6 @@ const BUTTON_TEXT_SIZE: f32 = 50.;
 const BUTTON_TEXT_COLOR: Color = Color::BLACK;
 
 impl Menu {
-    fn menu_at(&self, mut pos: Vec<usize>) -> &Menu {
-        if pos.is_empty() {
-            self
-        } else {
-            if let Action::Menu(menu) = &self.buttons[pos.remove(0)].action {
-                menu.menu_at(pos)
-            } else {
-                panic!("Menu pos does not point to a menu");
-            }
-        }
-    }
-
     fn spawn(&self, commands: &mut Commands, asset_server: &AssetServer) -> Entity {
         commands
             .spawn_bundle(NodeBundle {
@@ -89,7 +83,7 @@ impl Menu {
                     ..default()
                 });
 
-                for (pos, button) in self.buttons.iter().enumerate() {
+                for button in &self.buttons {
                     parent
                         .spawn_bundle(ButtonBundle {
                             style: Style {
@@ -103,7 +97,6 @@ impl Menu {
                             ..default()
                         })
                         .insert(button.action.clone())
-                        .insert(ButtonPos(pos))
                         .with_children(|parent| {
                             parent.spawn_bundle(TextBundle {
                                 text: Text::with_section(
@@ -124,51 +117,24 @@ impl Menu {
     }
 }
 
-struct CurrMenu {
-    menu: Menu,
-    menu_e: Entity,
-    pos: Vec<usize>,
-}
-
-impl CurrMenu {
-    fn nav(&mut self, nav_menu: &NavMenu, commands: &mut Commands, asset_server: &AssetServer) {
-        commands.entity(self.menu_e).despawn_recursive();
-
-        match nav_menu {
-            NavMenu::Fore(pos) => {
-                self.pos.push(*pos);
-            }
-            NavMenu::Back => {
-                self.pos.pop();
-            }
-        }
-
-        self.menu_e = self
-            .menu
-            .menu_at(self.pos.clone())
-            .spawn(commands, asset_server);
-    }
-}
+#[derive(Deref, DerefMut)]
+struct MenuEs(Vec<Entity>);
 
 #[derive(Deref)]
-struct SpawnMenu(Menu);
-
-enum NavMenu {
-    Fore(usize),
-    Back,
-}
+struct NextMenu(Menu);
 
 fn main() {
     let mut app = App::new();
     app.add_plugins(DefaultPlugins)
-        .add_event::<SpawnMenu>()
-        .add_event::<NavMenu>()
         .insert_resource(ClearColor(Color::BLACK))
-        .insert_resource(WinitSettings::desktop_app())
-        .add_startup_system(init)
-        .add_system(button_action)
-        .add_system(nav_menu)
-        .add_system(spawn_menu);
+        .add_state(GameState::MainMenu)
+        .add_system_set(SystemSet::on_enter(GameState::MainMenu).with_system(init))
+        .add_system_set(SystemSet::on_resume(GameState::MainMenu).with_system(term))
+        .add_system_set(SystemSet::on_enter(GameState::Menu).with_system(init_menu))
+        .add_system_set(SystemSet::on_update(GameState::Menu).with_system(button_action))
+        .add_system_set(SystemSet::on_exit(GameState::Menu).with_system(term_menu))
+        .add_system_set(SystemSet::on_enter(GameState::Buffer).with_system(push_state))
+        .add_system_set(SystemSet::on_resume(GameState::Buffer).with_system(pop_state));
 
     #[cfg(feature = "inspector")]
     app.add_plugin(WorldInspectorPlugin::new());
@@ -176,11 +142,11 @@ fn main() {
     app.run();
 }
 
-fn init(mut commands: Commands, mut spawn_menus: EventWriter<SpawnMenu>) {
+fn init(mut commands: Commands, mut state: ResMut<State<GameState>>) {
     commands.spawn_bundle(UiCameraBundle::default());
 
-    spawn_menus.send(SpawnMenu(Menu {
-        title: "voxmod".to_string(),
+    commands.insert_resource(NextMenu(Menu {
+        title: "blockmod".to_string(),
         buttons: vec![
             MenuButton {
                 text: "Play".to_string(),
@@ -189,11 +155,11 @@ fn init(mut commands: Commands, mut spawn_menus: EventWriter<SpawnMenu>) {
                     buttons: vec![
                         MenuButton {
                             text: "World 1".to_string(),
-                            action: Action::Quit,
+                            action: Action::Back,
                         },
                         MenuButton {
                             text: "World 2".to_string(),
-                            action: Action::Quit,
+                            action: Action::Back,
                         },
                         MenuButton {
                             text: "Back".to_string(),
@@ -204,61 +170,57 @@ fn init(mut commands: Commands, mut spawn_menus: EventWriter<SpawnMenu>) {
             },
             MenuButton {
                 text: "Edit".to_string(),
-                action: Action::Quit,
+                action: Action::Back,
             },
             MenuButton {
                 text: "Quit".to_string(),
-                action: Action::Quit,
+                action: Action::Back,
             },
         ],
     }));
+    state.push(GameState::Menu).unwrap();
 }
 
-fn spawn_menu(
-    mut commands: Commands,
-    mut spawn_menus: EventReader<SpawnMenu>,
-    asset_server: Res<AssetServer>,
-) {
-    for spawn_menu in spawn_menus.iter() {
-        let menu_e = spawn_menu.spawn(&mut commands, &asset_server);
-        commands.insert_resource(CurrMenu {
-            menu: (**spawn_menu).clone(),
-            menu_e,
-            pos: Vec::default(),
-        })
-    }
+fn term(mut app_exits: EventWriter<AppExit>) {
+    app_exits.send(AppExit);
 }
 
-fn nav_menu(
+fn init_menu(
     mut commands: Commands,
-    mut nav_menus: EventReader<NavMenu>,
-    mut curr_menu: Option<ResMut<CurrMenu>>,
+    mut menu_es: Option<ResMut<MenuEs>>,
+    mut nodes: Query<&mut Style, With<Node>>,
     asset_server: Res<AssetServer>,
+    next_menu: Res<NextMenu>,
 ) {
-    for nav_menu in nav_menus.iter() {
-        if let Some(curr_menu) = &mut curr_menu {
-            curr_menu.nav(nav_menu, &mut commands, &asset_server);
-        } else {
-            panic!("Attempted to navigate menu when no menu was open");
-        }
+    let menu_e = next_menu.spawn(&mut commands, &asset_server);
+    if let Some(menu_es) = &mut menu_es {
+        nodes.get_mut(*menu_es.last().unwrap()).unwrap().display = Display::None;
+        menu_es.push(menu_e);
+    } else {
+        commands.insert_resource(MenuEs(vec![menu_e]));
     }
+
+    commands.remove_resource::<NextMenu>();
 }
 
 fn button_action(
-    mut app_exits: EventWriter<AppExit>,
-    mut nav_menus: EventWriter<NavMenu>,
+    mut commands: Commands,
     mut interactions: Query<
-        (&Interaction, &mut UiColor, &Action, &ButtonPos),
+        (&Interaction, &mut UiColor, &Action),
         (Changed<Interaction>, With<Button>),
     >,
+    mut state: ResMut<State<GameState>>,
 ) {
-    for (interaction, mut color, action, pos) in interactions.iter_mut() {
+    for (interaction, mut color, action) in interactions.iter_mut() {
         *color = match interaction {
             Interaction::Clicked => {
                 match action {
-                    Action::Menu(_) => nav_menus.send(NavMenu::Fore(**pos)),
-                    Action::Back => nav_menus.send(NavMenu::Back),
-                    Action::Quit => app_exits.send(AppExit),
+                    Action::Menu(menu) => {
+                        commands.insert_resource(BufferedState(GameState::Menu));
+                        commands.insert_resource(NextMenu(menu.clone()));
+                        state.push(GameState::Buffer).unwrap();
+                    }
+                    Action::Back => state.pop().unwrap(),
                 }
                 BUTTON_PRESS_COLOR
             }
@@ -267,4 +229,30 @@ fn button_action(
         }
         .into();
     }
+}
+
+fn term_menu(
+    mut commands: Commands,
+    mut nodes: Query<&mut Style, With<Node>>,
+    mut menu_es: ResMut<MenuEs>,
+) {
+    commands.entity(menu_es.pop().unwrap()).despawn_recursive();
+    if let Some(menu_e) = menu_es.last() {
+        nodes.get_mut(*menu_e).unwrap().display = Display::Flex;
+    } else {
+        commands.remove_resource::<MenuEs>();
+    }
+}
+
+fn push_state(
+    mut commands: Commands,
+    buffered_state: Res<BufferedState>,
+    mut state: ResMut<State<GameState>>,
+) {
+    state.push(buffered_state.clone()).unwrap();
+    commands.remove_resource::<BufferedState>();
+}
+
+fn pop_state(mut state: ResMut<State<GameState>>) {
+    state.pop().unwrap();
 }
