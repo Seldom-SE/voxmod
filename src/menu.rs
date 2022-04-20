@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-use crate::state::{BufferedState, GameState};
+use crate::state::{BufferedState, GameState, OpeningGame};
 
 pub struct MenuPlugin;
 
@@ -17,6 +17,7 @@ impl Plugin for MenuPlugin {
 enum Action {
     Menu(Menu),
     Back,
+    Game,
 }
 
 #[derive(Clone)]
@@ -137,11 +138,11 @@ fn init_main_menu(mut commands: Commands, mut state: ResMut<State<GameState>>) {
                     buttons: vec![
                         MenuButton {
                             text: "World 1".to_string(),
-                            action: Action::Back,
+                            action: Action::Game,
                         },
                         MenuButton {
                             text: "World 2".to_string(),
-                            action: Action::Back,
+                            action: Action::Game,
                         },
                         MenuButton {
                             text: "Back".to_string(),
@@ -152,7 +153,7 @@ fn init_main_menu(mut commands: Commands, mut state: ResMut<State<GameState>>) {
             },
             MenuButton {
                 text: "Edit".to_string(),
-                action: Action::Back,
+                action: Action::Game,
             },
             MenuButton {
                 text: "Quit".to_string(),
@@ -199,6 +200,10 @@ fn button_action(
                         state.push(GameState::Buffer).unwrap();
                     }
                     Action::Back => state.pop().unwrap(),
+                    Action::Game => {
+                        commands.insert_resource(OpeningGame);
+                        state.replace(GameState::Game).unwrap()
+                    }
                 }
                 BUTTON_PRESS_COLOR
             }

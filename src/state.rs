@@ -1,4 +1,4 @@
-use bevy::prelude::*;
+use bevy::{ecs::schedule::StateError, prelude::*};
 
 pub struct StatePlugin;
 
@@ -15,10 +15,13 @@ pub enum GameState {
     MainMenu,
     Menu,
     Buffer,
+    Game,
 }
 
 #[derive(Deref)]
 pub struct BufferedState(pub GameState);
+
+pub struct OpeningGame;
 
 fn push_state(
     mut commands: Commands,
@@ -29,6 +32,12 @@ fn push_state(
     commands.remove_resource::<BufferedState>();
 }
 
+#[allow(unused_must_use)]
 fn pop_state(mut state: ResMut<State<GameState>>) {
-    state.pop().unwrap();
+    if let Err(err) = state.pop() {
+        if let StateError::StateAlreadyQueued = err {
+        } else {
+            panic!("{}", err);
+        }
+    }
 }
