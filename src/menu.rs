@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use bevy_asset_loader::AssetCollection;
 
 use crate::state::{BufferedState, GameState, OpeningGame};
 
@@ -11,6 +12,12 @@ impl Plugin for MenuPlugin {
             .add_system_set(SystemSet::on_update(GameState::Menu).with_system(button_action))
             .add_system_set(SystemSet::on_exit(GameState::Menu).with_system(term_menu));
     }
+}
+
+#[derive(AssetCollection)]
+pub struct Fonts {
+    #[asset(path = "fonts/FiraSans-Bold.ttf")]
+    font: Handle<Font>,
 }
 
 #[derive(Clone, Component)]
@@ -32,7 +39,6 @@ struct Menu {
     buttons: Vec<MenuButton>,
 }
 
-static FONT_PATH: &str = "fonts/FiraSans-Bold.ttf";
 const MENU_ITEM_MARGIN: Rect<Val> = Rect {
     left: Val::Percent(0.),
     right: Val::Percent(0.),
@@ -52,7 +58,7 @@ const BUTTON_TEXT_SIZE: f32 = 50.;
 const BUTTON_TEXT_COLOR: Color = Color::BLACK;
 
 impl Menu {
-    fn spawn(&self, commands: &mut Commands, asset_server: &AssetServer) -> Entity {
+    fn spawn(&self, commands: &mut Commands, fonts: &Fonts) -> Entity {
         commands
             .spawn_bundle(NodeBundle {
                 style: Style {
@@ -66,8 +72,6 @@ impl Menu {
                 ..default()
             })
             .with_children(|parent| {
-                let font = asset_server.load(FONT_PATH);
-
                 parent.spawn_bundle(TextBundle {
                     style: Style {
                         margin: MENU_ITEM_MARGIN.clone(),
@@ -76,7 +80,7 @@ impl Menu {
                     text: Text::with_section(
                         self.title.clone(),
                         TextStyle {
-                            font: font.clone(),
+                            font: fonts.font.clone(),
                             font_size: MENU_TITLE_SIZE,
                             color: MENU_TITLE_COLOR,
                         },
@@ -104,7 +108,7 @@ impl Menu {
                                 text: Text::with_section(
                                     button.text.clone(),
                                     TextStyle {
-                                        font: font.clone(),
+                                        font: fonts.font.clone(),
                                         font_size: BUTTON_TEXT_SIZE,
                                         color: BUTTON_TEXT_COLOR,
                                     },
@@ -168,10 +172,10 @@ fn init_menu(
     mut commands: Commands,
     mut menu_es: Option<ResMut<MenuEs>>,
     mut nodes: Query<&mut Style, With<Node>>,
-    asset_server: Res<AssetServer>,
+    fonts: Res<Fonts>,
     next_menu: Res<NextMenu>,
 ) {
-    let menu_e = next_menu.spawn(&mut commands, &asset_server);
+    let menu_e = next_menu.spawn(&mut commands, &fonts);
     if let Some(menu_es) = &mut menu_es {
         nodes.get_mut(*menu_es.last().unwrap()).unwrap().display = Display::None;
         menu_es.push(menu_e);

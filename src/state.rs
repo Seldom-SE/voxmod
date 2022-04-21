@@ -4,7 +4,7 @@ pub struct StatePlugin;
 
 impl Plugin for StatePlugin {
     fn build(&self, app: &mut App) {
-        app.add_state(GameState::MainMenu)
+        app.add_state(GameState::Loading)
             .add_system_set(SystemSet::on_enter(GameState::Buffer).with_system(push_state))
             .add_system_set(SystemSet::on_resume(GameState::Buffer).with_system(pop_state));
     }
@@ -12,6 +12,7 @@ impl Plugin for StatePlugin {
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum GameState {
+    Loading,
     MainMenu,
     Menu,
     Buffer,
