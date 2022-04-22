@@ -4,6 +4,8 @@ use bevy::{input::mouse::MouseMotion, prelude::*, render::camera::Camera3d};
 
 use crate::state::GameState;
 
+use super::player::ChunkPos;
+
 pub struct CamPlugin;
 
 impl Plugin for CamPlugin {
@@ -11,6 +13,7 @@ impl Plugin for CamPlugin {
         app.add_system_set(SystemSet::on_enter(GameState::Game).with_system(init_cam))
             .add_system_set(
                 SystemSet::on_update(GameState::Game)
+                    .with_system(unlock_cursor)
                     .with_system(look_cam)
                     .with_system(move_cam),
             )
@@ -27,11 +30,20 @@ struct Rotation {
 fn init_cam(mut commands: Commands, mut windows: ResMut<Windows>) {
     commands
         .spawn_bundle(PerspectiveCameraBundle::default())
-        .insert(Rotation::default());
+        .insert(Rotation::default())
+        .insert(ChunkPos::default());
 
     let window = windows.primary_mut();
     window.set_cursor_lock_mode(true);
     window.set_cursor_visibility(false);
+}
+
+fn unlock_cursor(mut windows: ResMut<Windows>, keys: Res<Input<KeyCode>>) {
+    if keys.just_pressed(KeyCode::Tab) {
+        let window = windows.primary_mut();
+        window.set_cursor_lock_mode(false);
+        window.set_cursor_visibility(true);
+    }
 }
 
 const MOUSE_SENSITIVITY: f32 = 0.000075;

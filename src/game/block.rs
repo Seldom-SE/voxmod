@@ -1,4 +1,6 @@
 use bevy::prelude::*;
 
-#[derive(Clone, Component, Deref)]
-pub struct BlockColor(pub Color);
+#[derive(Clone)]
+pub struct Block {
+    pub color: Color,
+}

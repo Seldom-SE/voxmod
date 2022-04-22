@@ -36,8 +36,8 @@ use bevy::{
 use bytemuck::{cast_slice, Pod, Zeroable};
 
 use super::{
-    block::BlockColor,
     chunk::{Chunk, CHUNK_SIZE},
+    map::Map,
 };
 
 pub struct RenderPlugin;
@@ -46,10 +46,13 @@ const BLOCKS_PASS: &str = "blocks_pass";
 
 impl Plugin for RenderPlugin {
     fn build(&self, app: &mut App) {
-        app.world.resource_mut::<Assets<Shader>>().set_untracked(
-            BLOCKS_SHADER_HANDLE,
-            Shader::from_wgsl(include_str!("block.wgsl")),
-        );
+        app.add_startup_system(init_bind_group)
+            .world
+            .resource_mut::<Assets<Shader>>()
+            .set_untracked(
+                BLOCKS_SHADER_HANDLE,
+                Shader::from_wgsl(include_str!("block.wgsl")),
+            );
 
         let render_app = app.sub_app_mut(RenderApp);
 
@@ -134,6 +137,9 @@ impl<P: PhaseItem> RenderCommand<P> for SetBlocksPipeline {
 
 #[derive(Component, Deref)]
 struct GpuBlocksBindGroup(BindGroup);
+
+#[derive(Component)]
+struct BindGroupMarker;
 
 struct SetGpuBlocksBindGroup<const I: usize>;
 
@@ -234,7 +240,7 @@ impl FromWorld for BlocksPipeline {
             world
                 .resource_mut::<PipelineCache>()
                 .queue_render_pipeline(RenderPipelineDescriptor {
-                    label: Some("cubes_pipeline".into()),
+                    label: Some("blocks_pipeline".into()),
                     layout: Some(vec![view_layout, blocks_layout.clone()]),
                     vertex: VertexState {
                         shader: BLOCKS_SHADER_HANDLE.typed(),
@@ -316,17 +322,12 @@ impl Default for GpuBlocks {
 
 #[derive(Component)]
 pub struct RenderChunk {
-    pub blocks: Option<[Box<[Box<[Option<BlockColor>; CHUNK_SIZE]>; CHUNK_SIZE]>; CHUNK_SIZE]>,
+    pub blocks: Option<[Box<[Box<[Option<Color>; CHUNK_SIZE]>; CHUNK_SIZE]>; CHUNK_SIZE]>,
     pub pos: IVec3,
 }
 
 impl RenderChunk {
-    fn prepare(
-        &self,
-        render_device: &RenderDevice,
-        render_queue: &RenderQueue,
-        gpu_blocks: &mut GpuBlocks,
-    ) {
+    fn prepare(&self, gpu_blocks: &mut GpuBlocks) {
         if let Some(blocks) = &self.blocks {
             let block_pos = self.pos * CHUNK_SIZE as i32;
 
@@ -344,17 +345,6 @@ impl RenderChunk {
                     }
                 }
             }
-
-            gpu_blocks.i_count = gpu_blocks.insts.len() as u32 * BLOCK_I_COUNT as u32;
-            gpu_blocks.i_buffer = Some(render_device.create_buffer_with_data(
-                &BufferInitDescriptor {
-                    label: Some("gpu_blocks_i_buffer"),
-                    contents: cast_slice(&gen_i_buffer_data(gpu_blocks.insts.len())),
-                    usage: BufferUsages::INDEX,
-                },
-            ));
-
-            gpu_blocks.insts.write_buffer(render_device, render_queue);
         }
     }
 }
@@ -396,7 +386,7 @@ impl Node for BlocksPassNode {
         world: &World,
     ) -> Result<(), NodeRunError> {
         let view_e = graph.get_input_entity(Self::IN_VIEW)?;
-        let (cubes_phase, target, depth) = match self.query.get_manual(world, view_e) {
+        let (blocks_phase, target, depth) = match self.query.get_manual(world, view_e) {
             Ok(query) => query,
             Err(_) => return Ok(()),
         };
@@ -421,7 +411,7 @@ impl Node for BlocksPassNode {
 
         let mut draw_fns = world.resource::<DrawFunctions<BlocksPhaseItem>>().write();
         let mut tracked_pass = TrackedRenderPass::new(render_pass);
-        for item in &cubes_phase.items {
+        for item in &blocks_phase.items {
             draw_fns
                 .get_mut(item.draw_fn)
                 .unwrap()
@@ -432,7 +422,19 @@ impl Node for BlocksPassNode {
     }
 }
 
-fn extract_blocks_phase(mut commands: Commands, cams: Query<Entity, With<Camera3d>>) {
+fn init_bind_group(mut commands: Commands) {
+    commands.spawn().insert(BindGroupMarker);
+}
+
+fn extract_blocks_phase(
+    mut commands: Commands,
+    cams: Query<Entity, With<Camera3d>>,
+    bind_groups: Query<Entity, With<BindGroupMarker>>,
+) {
+    for bind_group_e in bind_groups.iter() {
+        commands.get_or_spawn(bind_group_e).insert(BindGroupMarker);
+    }
+
     if let Ok(cam_e) = cams.get_single() {
         commands
             .get_or_spawn(cam_e)
@@ -440,17 +442,15 @@ fn extract_blocks_phase(mut commands: Commands, cams: Query<Entity, With<Camera3
     }
 }
 
-fn extract_blocks(
-    mut commands: Commands,
-    mut chunks: Query<(Entity, &mut Chunk)>,
-    blocks: Query<&BlockColor>,
-) {
-    for (chunk_e, mut chunk) in chunks.iter_mut() {
-        chunk.extract(&mut commands, chunk_e, &blocks);
+fn extract_blocks(mut commands: Commands, chunks: Query<&Chunk>, map: Option<Res<Map>>) {
+    if let Some(map) = map {
+        if map.is_changed() {
+            map.extract(&mut commands, &chunks);
+        }
     }
 }
 
-const BLOCK_BACKFACE_OPT: bool = false;
+const BLOCK_BACKFACE_OPT: bool = true;
 const BLOCK_I_COUNT: usize = if BLOCK_BACKFACE_OPT {
     3 * 3 * 2
 } else {
@@ -458,10 +458,10 @@ const BLOCK_I_COUNT: usize = if BLOCK_BACKFACE_OPT {
 };
 const BLOCK_VERTEX_COUNT: usize = 8;
 
-fn gen_i_buffer_data(num_blocks: usize) -> Vec<u32> {
+fn gen_i_buffer_data(block_count: usize) -> Vec<u32> {
     #[rustfmt::skip]
     let block_is = [
-        0u32, 2, 1, 2, 3, 1,
+        0, 2, 1, 2, 3, 1,
         5, 4, 1, 1, 4, 0,
         0, 4, 6, 0, 6, 2,
         6, 5, 7, 6, 4, 5,
@@ -469,9 +469,9 @@ fn gen_i_buffer_data(num_blocks: usize) -> Vec<u32> {
         7, 1, 3, 7, 5, 1,
     ];
 
-    let num_is = num_blocks * BLOCK_I_COUNT;
+    let i_count = block_count * BLOCK_I_COUNT;
 
-    (0..num_is)
+    (0..i_count)
         .map(|i| {
             (i / BLOCK_I_COUNT) as u32 * BLOCK_VERTEX_COUNT as u32 + block_is[i % BLOCK_I_COUNT]
         })
@@ -484,14 +484,32 @@ fn prepare_blocks(
     render_queue: Res<RenderQueue>,
     mut gpu_blocks: ResMut<GpuBlocks>,
 ) {
-    for chunk in chunks.iter() {
-        chunk.prepare(&render_device, &render_queue, &mut gpu_blocks);
+    if !chunks.is_empty() {
+        gpu_blocks.insts.clear();
+
+        for chunk in chunks.iter() {
+            chunk.prepare(&mut gpu_blocks);
+        }
+
+        gpu_blocks.i_count = gpu_blocks.insts.len() as u32 * BLOCK_I_COUNT as u32;
+
+        gpu_blocks.i_buffer = Some(
+            render_device.create_buffer_with_data(&BufferInitDescriptor {
+                label: Some("gpu_blocks_i_buffer"),
+                contents: cast_slice(&gen_i_buffer_data(gpu_blocks.insts.len())),
+                usage: BufferUsages::INDEX,
+            }),
+        );
+
+        gpu_blocks
+            .insts
+            .write_buffer(&*render_device, &*render_queue);
     }
 }
 
 fn queue_blocks(
     mut commands: Commands,
-    chunks: Query<Entity, With<RenderChunk>>,
+    bind_groups: Query<Entity, With<BindGroupMarker>>,
     mut views: Query<&mut RenderPhase<BlocksPhaseItem>>,
     opaque_3d_draw_fns: Res<DrawFunctions<BlocksPhaseItem>>,
     blocks_pipeline: Res<BlocksPipeline>,
@@ -501,20 +519,22 @@ fn queue_blocks(
     let draw_blocks = opaque_3d_draw_fns.read().get_id::<DrawBlocks>().unwrap();
 
     for mut opaque_phase in views.iter_mut() {
-        for chunk_e in chunks.iter() {
-            commands.get_or_spawn(chunk_e).insert(GpuBlocksBindGroup(
-                render_device.create_bind_group(&BindGroupDescriptor {
-                    label: Some("gpu_blocks_bind_group"),
-                    layout: &blocks_pipeline.layout,
-                    entries: &[BindGroupEntry {
-                        binding: 0,
-                        resource: gpu_blocks.insts.buffer().unwrap().as_entire_binding(),
-                    }],
-                }),
-            ));
+        for bind_group_e in bind_groups.iter() {
+            commands
+                .get_or_spawn(bind_group_e)
+                .insert(GpuBlocksBindGroup(render_device.create_bind_group(
+                    &BindGroupDescriptor {
+                        label: Some("gpu_blocks_bind_group"),
+                        layout: &blocks_pipeline.layout,
+                        entries: &[BindGroupEntry {
+                            binding: 0,
+                            resource: gpu_blocks.insts.buffer().unwrap().as_entire_binding(),
+                        }],
+                    },
+                )));
 
             opaque_phase.add(BlocksPhaseItem {
-                e: chunk_e,
+                e: bind_group_e,
                 draw_fn: draw_blocks,
             });
         }
