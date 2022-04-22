@@ -46,23 +46,20 @@ fn unlock_cursor(mut windows: ResMut<Windows>, keys: Res<Input<KeyCode>>) {
     }
 }
 
-const MOUSE_SENSITIVITY: f32 = 0.000075;
+const MOUSE_SENSITIVITY: f32 = 0.000005;
 
 fn look_cam(
     mut mouse_motions: EventReader<MouseMotion>,
     mut cams: Query<(&mut Rotation, &mut Transform), With<Camera3d>>,
     windows: Res<Windows>,
-    time: Res<Time>,
 ) {
     let window = windows.primary();
     let window_scale = window.height().min(window.width());
     for mouse_motion in mouse_motions.iter() {
         for (mut rotation, mut tf) in cams.iter_mut() {
-            rotation.pitch -=
-                (mouse_motion.delta.y * window_scale * time.delta_seconds() * MOUSE_SENSITIVITY)
-                    .clamp(-FRAC_PI_2, FRAC_PI_2);
-            rotation.yaw -=
-                mouse_motion.delta.x * window_scale * time.delta_seconds() * MOUSE_SENSITIVITY;
+            rotation.pitch -= (mouse_motion.delta.y * window_scale * MOUSE_SENSITIVITY)
+                .clamp(-FRAC_PI_2, FRAC_PI_2);
+            rotation.yaw -= mouse_motion.delta.x * window_scale * MOUSE_SENSITIVITY;
 
             tf.rotation = Quat::from_axis_angle(Vec3::Y, rotation.yaw)
                 * Quat::from_axis_angle(Vec3::X, rotation.pitch);

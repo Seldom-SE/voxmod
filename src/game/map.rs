@@ -6,7 +6,7 @@ use bevy::{
 
 use crate::state::GameState;
 
-use super::{chunk::Chunk, player::ChunkPos};
+use super::{chunk::Chunk, player::ChunkPos, render::UnrenderChunk};
 
 pub struct MapPlugin;
 
@@ -17,17 +17,33 @@ impl Plugin for MapPlugin {
     }
 }
 
-#[derive(Default, Deref, DerefMut)]
-pub struct Map(HashMap<IVec3, Entity>);
+struct RemovedChunk {
+    pos: IVec3,
+    e: Entity,
+}
+
+#[derive(Default)]
+pub struct Map {
+    chunks: HashMap<IVec3, Entity>,
+    removed: Vec<RemovedChunk>,
+}
 
 impl Map {
-    pub fn extract(&self, commands: &mut Commands, chunks: &Query<&Chunk>) {
-        for (pos, chunk_e) in self.iter() {
+    pub fn extract(&mut self, commands: &mut Commands, chunks: &mut Query<&mut Chunk>) {
+        for (pos, chunk_e) in self.chunks.iter() {
             chunks
-                .get(*chunk_e)
+                .get_mut(*chunk_e)
                 .unwrap()
                 .extract(commands, *chunk_e, *pos);
         }
+
+        for chunk in self.removed.iter() {
+            commands
+                .get_or_spawn(chunk.e)
+                .insert(UnrenderChunk(chunk.pos));
+        }
+
+        self.removed.clear();
     }
 }
 
@@ -35,7 +51,7 @@ fn init_map(mut commands: Commands) {
     commands.init_resource::<Map>();
 }
 
-const RENDER_RADIUS: i32 = 1;
+const RENDER_RADIUS: i32 = 4;
 
 fn load_chunks(
     mut commands: Commands,
@@ -53,21 +69,25 @@ fn load_chunks(
         }
 
         let mut to_remove = Vec::default();
-        for (chunk_pos, chunk_e) in map.iter() {
+        for (chunk_pos, chunk_e) in map.chunks.iter() {
             if !expected_chunks.contains(chunk_pos) {
-                to_remove.push(*chunk_pos);
+                to_remove.push(RemovedChunk {
+                    pos: *chunk_pos,
+                    e: *chunk_e,
+                });
                 expected_chunks.remove(chunk_pos);
                 commands.entity(*chunk_e).despawn();
             }
         }
 
-        for chunk_pos in to_remove {
-            map.remove(&chunk_pos);
+        for chunk in to_remove {
+            map.chunks.remove(&chunk.pos);
+            map.removed.push(chunk);
         }
 
         for chunk_pos in expected_chunks {
-            if !map.contains_key(&chunk_pos) {
-                map.insert(
+            if !map.chunks.contains_key(&chunk_pos) {
+                map.chunks.insert(
                     chunk_pos,
                     commands.spawn().insert(Chunk::generate(chunk_pos)).id(),
                 );

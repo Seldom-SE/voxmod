@@ -141,11 +141,7 @@ fn init_main_menu(mut commands: Commands, mut state: ResMut<State<GameState>>) {
                     title: "Choose a world".to_string(),
                     buttons: vec![
                         MenuButton {
-                            text: "World 1".to_string(),
-                            action: Action::Game,
-                        },
-                        MenuButton {
-                            text: "World 2".to_string(),
+                            text: "Create World".to_string(),
                             action: Action::Game,
                         },
                         MenuButton {

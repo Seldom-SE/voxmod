@@ -20,7 +20,7 @@ use bevy::{
         render_resource::{
             std140::AsStd140, BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout,
             BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingType, BlendState, Buffer,
-            BufferBindingType, BufferInitDescriptor, BufferSize, BufferUsages, BufferVec,
+            BufferBindingType, BufferInitDescriptor, BufferSize, BufferUsages,
             CachedRenderPipelineId, ColorTargetState, ColorWrites, CompareFunction, DepthBiasState,
             DepthStencilState, FragmentState, FrontFace, IndexFormat, LoadOp, MultisampleState,
             Operations, PipelineCache, PolygonMode, PrimitiveState,
@@ -36,7 +36,9 @@ use bevy::{
 use bytemuck::{cast_slice, Pod, Zeroable};
 
 use super::{
-    chunk::{Chunk, CHUNK_SIZE},
+    block::Block,
+    block_buffer::BlockBuffer,
+    chunk::{Chunk, CHUNK_AREA, CHUNK_SIZE},
     map::Map,
 };
 
@@ -299,7 +301,7 @@ impl FromWorld for BlocksPipeline {
 
 #[derive(Clone, Copy, Pod, Zeroable)]
 #[repr(C)]
-struct GpuBlock {
+pub struct GpuBlock {
     pos: Vec4,
     color: [f32; 4],
 }
@@ -307,7 +309,7 @@ struct GpuBlock {
 struct GpuBlocks {
     i_buffer: Option<Buffer>,
     i_count: u32,
-    insts: BufferVec<GpuBlock>,
+    insts: BlockBuffer,
 }
 
 impl Default for GpuBlocks {
@@ -315,39 +317,48 @@ impl Default for GpuBlocks {
         Self {
             i_buffer: None,
             i_count: 0,
-            insts: BufferVec::<GpuBlock>::new(BufferUsages::STORAGE),
+            insts: BlockBuffer::new(BufferUsages::STORAGE),
         }
     }
 }
 
 #[derive(Component)]
 pub struct RenderChunk {
-    pub blocks: Option<[Box<[Box<[Option<Color>; CHUNK_SIZE]>; CHUNK_SIZE]>; CHUNK_SIZE]>,
+    pub blocks: Vec<Option<Block>>,
     pub pos: IVec3,
 }
 
 impl RenderChunk {
     fn prepare(&self, gpu_blocks: &mut GpuBlocks) {
-        if let Some(blocks) = &self.blocks {
-            let block_pos = self.pos * CHUNK_SIZE as i32;
+        let block_pos = self.pos * CHUNK_SIZE as i32;
 
-            for (x, slice) in blocks.iter().enumerate() {
-                for (y, row) in slice.iter().enumerate() {
-                    for (z, block) in row.iter().enumerate() {
-                        if let Some(block) = block {
-                            gpu_blocks.insts.push(GpuBlock {
-                                pos: (IVec3::new(x as i32, y as i32, z as i32) + block_pos)
-                                    .as_vec3()
-                                    .extend(1.),
-                                color: block.as_rgba_f32(),
-                            });
-                        }
-                    }
-                }
-            }
-        }
+        gpu_blocks.insts.push(
+            self.pos,
+            self.blocks
+                .iter()
+                .enumerate()
+                .filter_map(|(i, block)| {
+                    block.as_ref().and_then(|block| {
+                        block.visible.then(|| GpuBlock {
+                            pos: (block_pos
+                                + (IVec3::new(
+                                    (i % CHUNK_SIZE) as i32,
+                                    (i / CHUNK_SIZE % CHUNK_SIZE) as i32,
+                                    (i / CHUNK_AREA) as i32,
+                                )))
+                            .as_vec3()
+                            .extend(1.),
+                            color: block.color.as_rgba_f32(),
+                        })
+                    })
+                })
+                .collect(),
+        );
     }
 }
+
+#[derive(Component, Deref)]
+pub struct UnrenderChunk(pub IVec3);
 
 struct BlocksPassNode {
     query: QueryState<
@@ -442,10 +453,10 @@ fn extract_blocks_phase(
     }
 }
 
-fn extract_blocks(mut commands: Commands, chunks: Query<&Chunk>, map: Option<Res<Map>>) {
-    if let Some(map) = map {
+fn extract_blocks(mut commands: Commands, mut chunks: Query<&mut Chunk>, map: Option<ResMut<Map>>) {
+    if let Some(mut map) = map {
         if map.is_changed() {
-            map.extract(&mut commands, &chunks);
+            map.extract(&mut commands, &mut chunks);
         }
     }
 }
@@ -479,13 +490,16 @@ fn gen_i_buffer_data(block_count: usize) -> Vec<u32> {
 }
 
 fn prepare_blocks(
+    unrender_chunks: Query<&UnrenderChunk>,
     chunks: Query<&RenderChunk>,
     render_device: Res<RenderDevice>,
     render_queue: Res<RenderQueue>,
     mut gpu_blocks: ResMut<GpuBlocks>,
 ) {
-    if !chunks.is_empty() {
-        gpu_blocks.insts.clear();
+    if !chunks.is_empty() || !unrender_chunks.is_empty() {
+        for unrender_chunk in unrender_chunks.iter() {
+            gpu_blocks.insts.remove(**unrender_chunk);
+        }
 
         for chunk in chunks.iter() {
             chunk.prepare(&mut gpu_blocks);
