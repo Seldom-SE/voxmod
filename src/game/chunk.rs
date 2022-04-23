@@ -1,4 +1,7 @@
-use bevy::prelude::*;
+use bevy::{math::const_ivec3, prelude::*, tasks::Task};
+use futures_lite::future::{block_on, poll_once};
+
+use crate::state::GameState;
 
 use super::{block::Block, render::RenderChunk};
 
@@ -6,50 +9,72 @@ pub const CHUNK_SIZE: usize = 32;
 pub const CHUNK_AREA: usize = CHUNK_SIZE * CHUNK_SIZE;
 pub const CHUNK_VOLUME: usize = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE;
 
+pub struct ChunkPlugin;
+
+impl Plugin for ChunkPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_system_set(SystemSet::on_update(GameState::Game).with_system(resolve_chunks));
+    }
+}
+
 #[derive(Component)]
 pub struct Chunk {
     blocks: Vec<Option<Block>>,
     dirty: bool,
 }
 
+static ADJACENTS: &[IVec3] = &[
+    const_ivec3!([1, 0, 0]),
+    const_ivec3!([-1, 0, 0]),
+    const_ivec3!([0, 1, 0]),
+    const_ivec3!([0, -1, 0]),
+    const_ivec3!([0, 0, 1]),
+    const_ivec3!([0, 0, -1]),
+];
+
 impl Chunk {
+    fn flatten(pos: IVec3) -> usize {
+        pos.x as usize + pos.y as usize * CHUNK_SIZE + pos.z as usize * CHUNK_AREA
+    }
+
+    pub fn expand(pos: usize) -> IVec3 {
+        IVec3::new(
+            (pos % CHUNK_SIZE) as i32,
+            (pos / CHUNK_SIZE % CHUNK_SIZE) as i32,
+            (pos / CHUNK_AREA) as i32,
+        )
+    }
+
     pub fn generate(pos: IVec3) -> Self {
-        let mut chunk = vec![None; CHUNK_VOLUME];
+        let mut blocks = vec![None; CHUNK_VOLUME];
         for x in 0..CHUNK_SIZE {
             for y in 0..CHUNK_SIZE {
                 for z in 0..CHUNK_SIZE {
                     if ((x % 30) as f32 / 30. * CHUNK_SIZE as f32)
                         > ((pos.y * CHUNK_SIZE as i32) + y as i32) as f32
                     {
-                        chunk[x + y * CHUNK_SIZE + z * CHUNK_SIZE * CHUNK_SIZE] = Some(Block {
-                            color: Color::rgb(
-                                (x % 100) as f32 / 100.,
-                                (y % 10) as f32 / 10.,
-                                (z % 55) as f32 / 55.,
-                            ),
-                            visible: true,
-                        });
+                        blocks[Self::flatten(IVec3::new(x as i32, y as i32, z as i32))] =
+                            Some(Block {
+                                color: Color::rgb(
+                                    (x % 100) as f32 / 100.,
+                                    (y % 10) as f32 / 10.,
+                                    (z % 55) as f32 / 55.,
+                                ),
+                                visible: true,
+                            });
                     }
                 }
             }
         }
 
-        let mut chunk = Self {
-            blocks: chunk,
-            dirty: true,
-        };
-
-        for x in 1..CHUNK_SIZE - 1 {
-            for y in 1..CHUNK_SIZE - 1 {
-                for z in 1..CHUNK_SIZE - 1 {
-                    if chunk.at((x, y, z - 1)).is_some()
-                        && chunk.at((x, y, z + 1)).is_some()
-                        && chunk.at((x, y - 1, z)).is_some()
-                        && chunk.at((x, y + 1, z)).is_some()
-                        && chunk.at((x - 1, y, z)).is_some()
-                        && chunk.at((x + 1, y, z)).is_some()
+        for x in 1..CHUNK_SIZE as i32 - 1 {
+            for y in 1..CHUNK_SIZE as i32 - 1 {
+                for z in 1..CHUNK_SIZE as i32 - 1 {
+                    if ADJACENTS
+                        .iter()
+                        .all(|adj| blocks[Chunk::flatten(IVec3::new(x, y, z) + *adj)].is_some())
                     {
-                        if let Some(block) = chunk.at_mut((x, y, z)) {
+                        if let Some(block) = &mut blocks[Chunk::flatten(IVec3::new(x, y, z))] {
                             block.visible = false;
                         }
                     }
@@ -57,19 +82,10 @@ impl Chunk {
             }
         }
 
-        chunk
-    }
-
-    fn at(&self, (x, y, z): (usize, usize, usize)) -> Option<&Block> {
-        self.blocks
-            .get(x + y * CHUNK_SIZE + z * CHUNK_SIZE * CHUNK_SIZE)
-            .and_then(|block| block.as_ref())
-    }
-
-    fn at_mut(&mut self, (x, y, z): (usize, usize, usize)) -> Option<&mut Block> {
-        self.blocks
-            .get_mut(x + y * CHUNK_SIZE + z * CHUNK_SIZE * CHUNK_SIZE)
-            .and_then(|block| block.as_mut())
+        Self {
+            blocks,
+            dirty: true,
+        }
     }
 
     pub fn extract(&mut self, commands: &mut Commands, chunk_e: Entity, pos: IVec3) {
@@ -79,6 +95,18 @@ impl Chunk {
                 pos,
             });
             self.dirty = false;
+        }
+    }
+}
+
+fn resolve_chunks(mut commands: Commands, mut loading_chunks: Query<(Entity, &mut Task<Chunk>)>) {
+    for (chunk_e, mut task) in loading_chunks.iter_mut() {
+        if let Some(chunk) = block_on(poll_once(&mut *task)) {
+            commands
+                .entity(chunk_e)
+                .insert(chunk)
+                .remove::<Task<Chunk>>();
+            break;
         }
     }
 }

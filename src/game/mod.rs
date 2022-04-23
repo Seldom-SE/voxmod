@@ -6,12 +6,13 @@ mod map;
 mod player;
 mod render;
 
-use bevy::{prelude::*, render::camera::Camera3d};
+use bevy::prelude::*;
 
 use crate::state::GameState;
 
 use self::{
     cam::CamPlugin,
+    chunk::ChunkPlugin,
     map::{Map, MapPlugin},
     player::PlayerPlugin,
     render::RenderPlugin,
@@ -22,6 +23,7 @@ pub struct GamePlugin;
 impl Plugin for GamePlugin {
     fn build(&self, app: &mut App) {
         app.add_plugin(CamPlugin)
+            .add_plugin(ChunkPlugin)
             .add_plugin(MapPlugin)
             .add_plugin(PlayerPlugin)
             .add_plugin(RenderPlugin)
@@ -31,7 +33,6 @@ impl Plugin for GamePlugin {
 
 fn exit_game(
     mut commands: Commands,
-    cams: Query<Entity, With<Camera3d>>,
     chunks: Query<Entity>,
     keys: Res<Input<KeyCode>>,
     mut state: ResMut<State<GameState>>,
@@ -42,10 +43,6 @@ fn exit_game(
         }
 
         commands.remove_resource::<Map>();
-
-        for cam in cams.iter() {
-            commands.entity(cam).despawn();
-        }
 
         state.set(GameState::MainMenu).unwrap();
     }

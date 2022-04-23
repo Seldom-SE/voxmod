@@ -19,6 +19,7 @@ fn update_chunk_pos(mut chunk_poses: Query<(&mut ChunkPos, &Transform)>) {
 
         if new_pos != **chunk_pos {
             **chunk_pos = new_pos;
+            info!("{}", new_pos);
         }
     }
 }

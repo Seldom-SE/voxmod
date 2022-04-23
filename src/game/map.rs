@@ -1,12 +1,15 @@
+use std::mem::take;
+
 use bevy::{
     prelude::*,
     render::camera::Camera3d,
+    tasks::AsyncComputeTaskPool,
     utils::{HashMap, HashSet},
 };
 
 use crate::state::GameState;
 
-use super::{chunk::Chunk, player::ChunkPos, render::UnrenderChunk};
+use super::{chunk::Chunk, player::ChunkPos, render::RemovedChunks};
 
 pub struct MapPlugin;
 
@@ -17,33 +20,73 @@ impl Plugin for MapPlugin {
     }
 }
 
-struct RemovedChunk {
-    pos: IVec3,
-    e: Entity,
-}
-
 #[derive(Default)]
 pub struct Map {
     chunks: HashMap<IVec3, Entity>,
-    removed: Vec<RemovedChunk>,
+    removed_chunks: Vec<IVec3>,
 }
 
+const RENDER_RADIUS: i32 = 4;
+const RENDER_RADIUS_F32: f32 = RENDER_RADIUS as f32;
+
 impl Map {
-    pub fn extract(&mut self, commands: &mut Commands, chunks: &mut Query<&mut Chunk>) {
+    fn load_chunks(
+        &mut self,
+        commands: &mut Commands,
+        pos: IVec3,
+        thread_pool: &AsyncComputeTaskPool,
+    ) {
+        let mut expected_chunks = HashSet::default();
+        for x in -RENDER_RADIUS..=RENDER_RADIUS {
+            for y in -RENDER_RADIUS..=RENDER_RADIUS {
+                for z in -RENDER_RADIUS..=RENDER_RADIUS {
+                    if ((x * x + y * y + z * z) as f32) < RENDER_RADIUS_F32 * RENDER_RADIUS_F32 {
+                        expected_chunks.insert(pos + IVec3::new(x, y, z));
+                    }
+                }
+            }
+        }
+
+        let mut to_remove = Vec::default();
+        for (chunk_pos, chunk_e) in self.chunks.iter() {
+            if !expected_chunks.contains(chunk_pos) {
+                to_remove.push(*chunk_pos);
+                expected_chunks.remove(chunk_pos);
+                commands.entity(*chunk_e).despawn();
+            }
+        }
+
+        for pos in to_remove {
+            self.chunks.remove(&pos);
+            self.removed_chunks.push(pos);
+        }
+
+        for chunk_pos in expected_chunks {
+            if !self.chunks.contains_key(&chunk_pos) {
+                self.chunks.insert(
+                    chunk_pos,
+                    commands
+                        .spawn()
+                        .insert(thread_pool.spawn(async move { Chunk::generate(chunk_pos) }))
+                        .id(),
+                );
+            }
+        }
+    }
+
+    pub fn extract(
+        &mut self,
+        commands: &mut Commands,
+        chunks: &mut Query<&mut Chunk>,
+        removed_chunks: &mut RemovedChunks,
+    ) {
         for (pos, chunk_e) in self.chunks.iter() {
-            chunks
-                .get_mut(*chunk_e)
-                .unwrap()
-                .extract(commands, *chunk_e, *pos);
+            if let Ok(mut chunk) = chunks.get_mut(*chunk_e) {
+                chunk.extract(commands, *chunk_e, *pos);
+            }
         }
 
-        for chunk in self.removed.iter() {
-            commands
-                .get_or_spawn(chunk.e)
-                .insert(UnrenderChunk(chunk.pos));
-        }
-
-        self.removed.clear();
+        **removed_chunks = take(&mut self.removed_chunks);
     }
 }
 
@@ -51,47 +94,13 @@ fn init_map(mut commands: Commands) {
     commands.init_resource::<Map>();
 }
 
-const RENDER_RADIUS: i32 = 4;
-
 fn load_chunks(
     mut commands: Commands,
     players: Query<&ChunkPos, (With<Camera3d>, Changed<ChunkPos>)>,
+    thread_pool: Res<AsyncComputeTaskPool>,
     mut map: ResMut<Map>,
 ) {
     for pos in players.iter() {
-        let mut expected_chunks = HashSet::default();
-        for x in -RENDER_RADIUS..=RENDER_RADIUS {
-            for y in -RENDER_RADIUS..=RENDER_RADIUS {
-                for z in -RENDER_RADIUS..=RENDER_RADIUS {
-                    expected_chunks.insert(**pos + IVec3::new(x, y, z));
-                }
-            }
-        }
-
-        let mut to_remove = Vec::default();
-        for (chunk_pos, chunk_e) in map.chunks.iter() {
-            if !expected_chunks.contains(chunk_pos) {
-                to_remove.push(RemovedChunk {
-                    pos: *chunk_pos,
-                    e: *chunk_e,
-                });
-                expected_chunks.remove(chunk_pos);
-                commands.entity(*chunk_e).despawn();
-            }
-        }
-
-        for chunk in to_remove {
-            map.chunks.remove(&chunk.pos);
-            map.removed.push(chunk);
-        }
-
-        for chunk_pos in expected_chunks {
-            if !map.chunks.contains_key(&chunk_pos) {
-                map.chunks.insert(
-                    chunk_pos,
-                    commands.spawn().insert(Chunk::generate(chunk_pos)).id(),
-                );
-            }
-        }
+        map.load_chunks(&mut commands, **pos, &thread_pool);
     }
 }

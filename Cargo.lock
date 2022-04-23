@@ -908,6 +908,7 @@ dependencies = [
  "bevy-inspector-egui",
  "bevy_asset_loader",
  "bytemuck",
+ "futures-lite",
  "rand",
 ]
 

@@ -35,10 +35,12 @@ use bevy::{
 };
 use bytemuck::{cast_slice, Pod, Zeroable};
 
+use crate::state::GameState;
+
 use super::{
     block::Block,
     block_buffer::BlockBuffer,
-    chunk::{Chunk, CHUNK_AREA, CHUNK_SIZE},
+    chunk::{Chunk, CHUNK_SIZE},
     map::Map,
 };
 
@@ -48,7 +50,7 @@ const BLOCKS_PASS: &str = "blocks_pass";
 
 impl Plugin for RenderPlugin {
     fn build(&self, app: &mut App) {
-        app.add_startup_system(init_bind_group)
+        app.add_system_set(SystemSet::on_enter(GameState::MainMenu).with_system(init_bind_group))
             .world
             .resource_mut::<Assets<Shader>>()
             .set_untracked(
@@ -63,6 +65,7 @@ impl Plugin for RenderPlugin {
             .add_render_command::<BlocksPhaseItem, DrawBlocks>()
             .init_resource::<BlocksPipeline>()
             .init_resource::<GpuBlocks>()
+            .init_resource::<RemovedChunks>()
             .add_system_to_stage(RenderStage::Extract, extract_blocks_phase)
             .add_system_to_stage(RenderStage::Extract, extract_blocks)
             .add_system_to_stage(RenderStage::Prepare, prepare_blocks)
@@ -332,7 +335,7 @@ impl RenderChunk {
     fn prepare(&self, gpu_blocks: &mut GpuBlocks) {
         let block_pos = self.pos * CHUNK_SIZE as i32;
 
-        gpu_blocks.insts.push(
+        gpu_blocks.insts.insert(
             self.pos,
             self.blocks
                 .iter()
@@ -340,14 +343,7 @@ impl RenderChunk {
                 .filter_map(|(i, block)| {
                     block.as_ref().and_then(|block| {
                         block.visible.then(|| GpuBlock {
-                            pos: (block_pos
-                                + (IVec3::new(
-                                    (i % CHUNK_SIZE) as i32,
-                                    (i / CHUNK_SIZE % CHUNK_SIZE) as i32,
-                                    (i / CHUNK_AREA) as i32,
-                                )))
-                            .as_vec3()
-                            .extend(1.),
+                            pos: (block_pos + (Chunk::expand(i))).as_vec3().extend(1.),
                             color: block.color.as_rgba_f32(),
                         })
                     })
@@ -357,8 +353,8 @@ impl RenderChunk {
     }
 }
 
-#[derive(Component, Deref)]
-pub struct UnrenderChunk(pub IVec3);
+#[derive(Default, Deref, DerefMut)]
+pub struct RemovedChunks(Vec<IVec3>);
 
 struct BlocksPassNode {
     query: QueryState<
@@ -454,11 +450,13 @@ fn extract_blocks_phase(
 }
 
 fn extract_blocks(mut commands: Commands, mut chunks: Query<&mut Chunk>, map: Option<ResMut<Map>>) {
+    let mut removed_chunks = default();
+
     if let Some(mut map) = map {
-        if map.is_changed() {
-            map.extract(&mut commands, &mut chunks);
-        }
+        map.extract(&mut commands, &mut chunks, &mut removed_chunks);
     }
+
+    commands.insert_resource(removed_chunks);
 }
 
 const BLOCK_BACKFACE_OPT: bool = true;
@@ -490,15 +488,15 @@ fn gen_i_buffer_data(block_count: usize) -> Vec<u32> {
 }
 
 fn prepare_blocks(
-    unrender_chunks: Query<&UnrenderChunk>,
     chunks: Query<&RenderChunk>,
+    removed_chunks: Res<RemovedChunks>,
     render_device: Res<RenderDevice>,
     render_queue: Res<RenderQueue>,
     mut gpu_blocks: ResMut<GpuBlocks>,
 ) {
-    if !chunks.is_empty() || !unrender_chunks.is_empty() {
-        for unrender_chunk in unrender_chunks.iter() {
-            gpu_blocks.insts.remove(**unrender_chunk);
+    if !chunks.is_empty() || !removed_chunks.is_empty() {
+        for removed_chunk in removed_chunks.iter() {
+            gpu_blocks.insts.remove(*removed_chunk);
         }
 
         for chunk in chunks.iter() {
@@ -530,6 +528,10 @@ fn queue_blocks(
     render_device: Res<RenderDevice>,
     gpu_blocks: Res<GpuBlocks>,
 ) {
+    if gpu_blocks.insts.buffer().is_none() {
+        return;
+    }
+
     let draw_blocks = opaque_3d_draw_fns.read().get_id::<DrawBlocks>().unwrap();
 
     for mut opaque_phase in views.iter_mut() {

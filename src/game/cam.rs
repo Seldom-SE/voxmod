@@ -13,7 +13,7 @@ impl Plugin for CamPlugin {
         app.add_system_set(SystemSet::on_enter(GameState::Game).with_system(init_cam))
             .add_system_set(
                 SystemSet::on_update(GameState::Game)
-                    .with_system(unlock_cursor)
+                    .with_system(toggle_cursor)
                     .with_system(look_cam)
                     .with_system(move_cam),
             )
@@ -38,11 +38,11 @@ fn init_cam(mut commands: Commands, mut windows: ResMut<Windows>) {
     window.set_cursor_visibility(false);
 }
 
-fn unlock_cursor(mut windows: ResMut<Windows>, keys: Res<Input<KeyCode>>) {
+fn toggle_cursor(mut windows: ResMut<Windows>, keys: Res<Input<KeyCode>>) {
     if keys.just_pressed(KeyCode::Tab) {
         let window = windows.primary_mut();
-        window.set_cursor_lock_mode(false);
-        window.set_cursor_visibility(true);
+        window.set_cursor_lock_mode(!window.cursor_locked());
+        window.set_cursor_visibility(!window.cursor_visible());
     }
 }
 
@@ -77,6 +77,7 @@ fn move_cam(
     for mut tf in cams.iter_mut() {
         let local_z = tf.local_z();
 
+        // Warning: best math you've ever seen /s
         tf.translation += ((keys.pressed(KeyCode::Comma) as i32 - keys.pressed(KeyCode::O) as i32)
             as f32
             * -Vec3::new(local_z.x, 0., local_z.z)
