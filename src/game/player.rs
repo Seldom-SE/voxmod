@@ -15,11 +15,10 @@ pub struct ChunkPos(IVec3);
 
 fn update_chunk_pos(mut chunk_poses: Query<(&mut ChunkPos, &Transform)>) {
     for (mut chunk_pos, tf) in chunk_poses.iter_mut() {
-        let new_pos = (tf.translation / CHUNK_SIZE as f32).as_ivec3();
+        let new_pos = (tf.translation / CHUNK_SIZE as f32).floor().as_ivec3();
 
         if new_pos != **chunk_pos {
             **chunk_pos = new_pos;
-            info!("{}", new_pos);
         }
     }
 }

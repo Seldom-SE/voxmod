@@ -27,7 +27,18 @@ impl Plugin for GamePlugin {
             .add_plugin(MapPlugin)
             .add_plugin(PlayerPlugin)
             .add_plugin(RenderPlugin)
+            .init_resource::<DespawnQueue>()
+            .add_system_to_stage(CoreStage::PostUpdate, despawn)
             .add_system_set(SystemSet::on_update(GameState::Game).with_system(exit_game));
+    }
+}
+
+#[derive(Default, Deref, DerefMut)]
+pub struct DespawnQueue(Vec<Entity>);
+
+fn despawn(mut commands: Commands, mut despawn_queue: ResMut<DespawnQueue>) {
+    for entity in despawn_queue.drain(..) {
+        commands.entity(entity).despawn();
     }
 }
 

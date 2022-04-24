@@ -1,9 +1,11 @@
+use std::f32::consts::PI;
+
 use bevy::{math::const_ivec3, prelude::*, tasks::Task};
 use futures_lite::future::{block_on, poll_once};
 
 use crate::state::GameState;
 
-use super::{block::Block, render::RenderChunk};
+use super::{block::Block, map::RENDER_RADIUS_F32, render::RenderChunk};
 
 pub const CHUNK_SIZE: usize = 32;
 pub const CHUNK_AREA: usize = CHUNK_SIZE * CHUNK_SIZE;
@@ -99,14 +101,24 @@ impl Chunk {
     }
 }
 
+const GEN_RATE_LIMIT: f32 = 0.01;
+const PI_4_3: f32 = 4. / 3. * PI;
+const GEN_LIMIT: usize =
+    (PI_4_3 * RENDER_RADIUS_F32 * RENDER_RADIUS_F32 * RENDER_RADIUS_F32 * GEN_RATE_LIMIT) as usize;
+
 fn resolve_chunks(mut commands: Commands, mut loading_chunks: Query<(Entity, &mut Task<Chunk>)>) {
+    let mut gen_count = 0;
     for (chunk_e, mut task) in loading_chunks.iter_mut() {
         if let Some(chunk) = block_on(poll_once(&mut *task)) {
             commands
                 .entity(chunk_e)
                 .insert(chunk)
                 .remove::<Task<Chunk>>();
-            break;
+
+            gen_count += 1;
+            if gen_count >= GEN_LIMIT {
+                break;
+            }
         }
     }
 }

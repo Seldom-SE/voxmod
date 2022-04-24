@@ -9,7 +9,7 @@ use bevy::{
 
 use crate::state::GameState;
 
-use super::{chunk::Chunk, player::ChunkPos, render::RemovedChunks};
+use super::{chunk::Chunk, player::ChunkPos, render::RemovedChunks, DespawnQueue};
 
 pub struct MapPlugin;
 
@@ -27,7 +27,7 @@ pub struct Map {
 }
 
 const RENDER_RADIUS: i32 = 4;
-const RENDER_RADIUS_F32: f32 = RENDER_RADIUS as f32;
+pub const RENDER_RADIUS_F32: f32 = RENDER_RADIUS as f32;
 
 impl Map {
     fn load_chunks(
@@ -35,6 +35,7 @@ impl Map {
         commands: &mut Commands,
         pos: IVec3,
         thread_pool: &AsyncComputeTaskPool,
+        despawn_queue: &mut DespawnQueue,
     ) {
         let mut expected_chunks = HashSet::default();
         for x in -RENDER_RADIUS..=RENDER_RADIUS {
@@ -52,7 +53,7 @@ impl Map {
             if !expected_chunks.contains(chunk_pos) {
                 to_remove.push(*chunk_pos);
                 expected_chunks.remove(chunk_pos);
-                commands.entity(*chunk_e).despawn();
+                despawn_queue.push(*chunk_e);
             }
         }
 
@@ -99,8 +100,9 @@ fn load_chunks(
     players: Query<&ChunkPos, (With<Camera3d>, Changed<ChunkPos>)>,
     thread_pool: Res<AsyncComputeTaskPool>,
     mut map: ResMut<Map>,
+    mut despawn_queue: ResMut<DespawnQueue>,
 ) {
     for pos in players.iter() {
-        map.load_chunks(&mut commands, **pos, &thread_pool);
+        map.load_chunks(&mut commands, **pos, &thread_pool, &mut despawn_queue);
     }
 }
