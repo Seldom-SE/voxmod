@@ -133,7 +133,7 @@ fn init_main_menu(mut commands: Commands, mut state: ResMut<State<GameState>>) {
     commands.spawn_bundle(UiCameraBundle::default());
 
     commands.insert_resource(NextMenu(Menu {
-        title: "blockmod".to_string(),
+        title: "voxmod".to_string(),
         buttons: vec![
             MenuButton {
                 text: "Play".to_string(),

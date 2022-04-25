@@ -8,29 +8,29 @@ use bevy::{
 };
 use bytemuck::cast_slice;
 
-use super::render::GpuBlock;
+use super::render::GpuVox;
 
-pub struct BlockBuffer {
-    blocks: HashMap<IVec3, Vec<GpuBlock>>,
+pub struct VoxBuffer {
+    blocks: HashMap<IVec3, Vec<GpuVox>>,
     buffer: Option<Buffer>,
     capacity: usize,
     block_size: usize,
     buffer_usages: BufferUsages,
 }
 
-impl Default for BlockBuffer {
+impl Default for VoxBuffer {
     fn default() -> Self {
         Self {
             blocks: HashMap::default(),
             buffer: None,
             capacity: 0,
             buffer_usages: BufferUsages::all(),
-            block_size: std::mem::size_of::<GpuBlock>(),
+            block_size: std::mem::size_of::<GpuVox>(),
         }
     }
 }
 
-impl BlockBuffer {
+impl VoxBuffer {
     pub fn new(buffer_usage: BufferUsages) -> Self {
         Self {
             buffer_usages: buffer_usage,
@@ -50,7 +50,7 @@ impl BlockBuffer {
             .fold(0, |acc, (_, blocks)| acc + blocks.len())
     }
 
-    pub fn insert(&mut self, pos: IVec3, value: Vec<GpuBlock>) -> usize {
+    pub fn insert(&mut self, pos: IVec3, value: Vec<GpuVox>) -> usize {
         let index = self.len();
         self.blocks.insert(pos, value);
         index

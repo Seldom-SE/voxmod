@@ -19,8 +19,7 @@ fn main() {
         .build(&mut app);
 
     app.insert_resource(WindowDescriptor {
-        // voxmod? blockmod? boxmod? boxelmod?
-        title: "blockmod".to_string(),
+        title: "voxmod".to_string(),
         ..default()
     })
     .add_plugins(DefaultPlugins)

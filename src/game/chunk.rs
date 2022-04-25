@@ -5,7 +5,7 @@ use futures_lite::future::{block_on, poll_once};
 
 use crate::state::GameState;
 
-use super::{block::Block, map::RENDER_RADIUS_F32, render::RenderChunk};
+use super::{map::RENDER_RADIUS_F32, render::RenderChunk, vox::Vox};
 
 pub const CHUNK_SIZE: usize = 32;
 pub const CHUNK_AREA: usize = CHUNK_SIZE * CHUNK_SIZE;
@@ -21,7 +21,7 @@ impl Plugin for ChunkPlugin {
 
 #[derive(Component)]
 pub struct Chunk {
-    blocks: Vec<Option<Block>>,
+    voxes: Vec<Option<Vox>>,
     dirty: bool,
 }
 
@@ -48,15 +48,15 @@ impl Chunk {
     }
 
     pub fn generate(pos: IVec3) -> Self {
-        let mut blocks = vec![None; CHUNK_VOLUME];
+        let mut voxes = vec![None; CHUNK_VOLUME];
         for x in 0..CHUNK_SIZE {
             for y in 0..CHUNK_SIZE {
                 for z in 0..CHUNK_SIZE {
                     if ((x % 30) as f32 / 30. * CHUNK_SIZE as f32)
                         > ((pos.y * CHUNK_SIZE as i32) + y as i32) as f32
                     {
-                        blocks[Self::flatten(IVec3::new(x as i32, y as i32, z as i32))] =
-                            Some(Block {
+                        voxes[Self::flatten(IVec3::new(x as i32, y as i32, z as i32))] =
+                            Some(Vox {
                                 color: Color::rgb(
                                     (x % 100) as f32 / 100.,
                                     (y % 10) as f32 / 10.,
@@ -74,26 +74,23 @@ impl Chunk {
                 for z in 1..CHUNK_SIZE as i32 - 1 {
                     if ADJACENTS
                         .iter()
-                        .all(|adj| blocks[Chunk::flatten(IVec3::new(x, y, z) + *adj)].is_some())
+                        .all(|adj| voxes[Chunk::flatten(IVec3::new(x, y, z) + *adj)].is_some())
                     {
-                        if let Some(block) = &mut blocks[Chunk::flatten(IVec3::new(x, y, z))] {
-                            block.visible = false;
+                        if let Some(vox) = &mut voxes[Chunk::flatten(IVec3::new(x, y, z))] {
+                            vox.visible = false;
                         }
                     }
                 }
             }
         }
 
-        Self {
-            blocks,
-            dirty: true,
-        }
+        Self { voxes, dirty: true }
     }
 
     pub fn extract(&mut self, commands: &mut Commands, chunk_e: Entity, pos: IVec3) {
         if self.dirty {
             commands.get_or_spawn(chunk_e).insert(RenderChunk {
-                blocks: self.blocks.clone(),
+                voxes: self.voxes.clone(),
                 pos,
             });
             self.dirty = false;
