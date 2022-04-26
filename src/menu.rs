@@ -28,6 +28,12 @@ enum Action {
 }
 
 #[derive(Clone)]
+enum MenuTitleSize {
+    MainTitle,
+    Heading,
+}
+
+#[derive(Clone)]
 struct MenuButton {
     text: String,
     action: Action,
@@ -36,6 +42,7 @@ struct MenuButton {
 #[derive(Clone)]
 struct Menu {
     title: String,
+    title_size: MenuTitleSize,
     buttons: Vec<MenuButton>,
 }
 
@@ -46,6 +53,7 @@ const MENU_ITEM_MARGIN: Rect<Val> = Rect {
     bottom: Val::Px(10.),
 };
 const MENU_TITLE_SIZE: f32 = 100.;
+const MENU_HEADING_SIZE: f32 = 65.;
 const MENU_TITLE_COLOR: Color = Color::WHITE;
 const BUTTON_SIZE: Size<Val> = Size {
     width: Val::Percent(50.),
@@ -81,7 +89,10 @@ impl Menu {
                         self.title.clone(),
                         TextStyle {
                             font: fonts.font.clone(),
-                            font_size: MENU_TITLE_SIZE,
+                            font_size: match self.title_size {
+                                MenuTitleSize::MainTitle => MENU_TITLE_SIZE,
+                                MenuTitleSize::Heading => MENU_HEADING_SIZE,
+                            },
                             color: MENU_TITLE_COLOR,
                         },
                         default(),
@@ -134,11 +145,13 @@ fn init_main_menu(mut commands: Commands, mut state: ResMut<State<GameState>>) {
 
     commands.insert_resource(NextMenu(Menu {
         title: "voxmod".to_string(),
+        title_size: MenuTitleSize::MainTitle,
         buttons: vec![
             MenuButton {
                 text: "Play".to_string(),
                 action: Action::Menu(Menu {
                     title: "Choose a world".to_string(),
+                    title_size: MenuTitleSize::Heading,
                     buttons: vec![
                         MenuButton {
                             text: "Create World".to_string(),
