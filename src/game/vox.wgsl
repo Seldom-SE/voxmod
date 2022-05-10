@@ -10,20 +10,20 @@ struct View {
     height: f32;
 };
 
-struct Block {
+struct Vox {
     pos: vec4<f32>;
     color: vec4<f32>;
 };
 
-struct Blocks {
-    blocks: array<Block>;
+struct Voxes {
+    voxes: array<Vox>;
 };
 
 [[group(0), binding(0)]]
 var<uniform> view: View;
 
 [[group(1), binding(0)]]
-var<storage> blocks: Blocks;
+var<storage> voxes: Voxes;
 
 struct VertOut {
     [[builtin(position)]] clip_pos: vec4<f32>;
@@ -37,9 +37,9 @@ struct VertOut {
 fn vertex([[builtin(vertex_index)]] vert_i: u32) -> VertOut {
     var out: VertOut;
 
-    let curr_block = blocks.blocks[vert_i >> 3u];
+    let curr_vox = voxes.voxes[vert_i >> 3u];
 
-    let local_cam_pos = view.world_pos - curr_block.pos.xyz;
+    let local_cam_pos = view.world_pos - curr_vox.pos.xyz;
     let vx = vert_i ^ (
         u32(local_cam_pos.y < 0.0) << 2u |
         u32(local_cam_pos.z < 0.0) << 1u |
@@ -51,10 +51,10 @@ fn vertex([[builtin(vertex_index)]] vert_i: u32) -> VertOut {
         i32((vx & 0x4u) >> 2u),
         i32((vx & 0x2u) >> 1u)
     ));
-    out.world_pos = vec4<f32>(curr_block.pos.xyz + out.uvw - 0.5, 1.0);
+    out.world_pos = vec4<f32>(curr_vox.pos.xyz + out.uvw - 0.5, 1.0);
     out.world_norm = vec3<f32>(0.0, 0.0, 1.0);
     out.clip_pos = view.view_proj * out.world_pos;
-    out.color = curr_block.color;
+    out.color = curr_vox.color;
 
     return out;
 }
