@@ -5,6 +5,7 @@ mod player;
 mod render;
 mod vox;
 mod vox_buffer;
+mod world;
 
 use bevy::prelude::*;
 

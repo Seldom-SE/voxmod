@@ -1,3 +1,5 @@
+use std::path::{Path, PathBuf};
+
 use bevy::prelude::*;
 use bevy_asset_loader::AssetCollection;
 
@@ -22,15 +24,25 @@ pub struct Fonts {
 
 #[derive(Clone, Component)]
 enum Action {
-    Menu(Menu),
+    Menu(MenuBuilder),
     Back,
-    Game,
+    Rebuild,
+    ImportGame,
+    CreateWorld(PathBuf),
+    Play(PathBuf),
+    Set(Vec<Action>),
 }
 
 #[derive(Clone)]
 enum MenuTitleSize {
     MainTitle,
-    Heading,
+    Normal,
+}
+
+#[derive(Clone)]
+struct MenuTitle {
+    text: String,
+    size: MenuTitleSize,
 }
 
 #[derive(Clone)]
@@ -39,11 +51,61 @@ struct MenuButton {
     action: Action,
 }
 
+#[derive(Clone, Deref)]
+struct MenuButtonRow(Vec<MenuButton>);
+
+#[derive(Clone)]
+enum AssetButtonAction {
+    CreateWorld,
+    Play,
+}
+
+impl AssetButtonAction {
+    fn assets_path(&self) -> &'static Path {
+        match self {
+            AssetButtonAction::CreateWorld => Path::new("games"),
+            AssetButtonAction::Play => Path::new("worlds"),
+        }
+    }
+
+    fn action(&self, path: &Path) -> Action {
+        let path = self.assets_path().join(path);
+        match self {
+            AssetButtonAction::CreateWorld => Action::CreateWorld(path),
+            AssetButtonAction::Play => Action::Play(path),
+        }
+    }
+}
+
+#[derive(Clone)]
+enum MenuButtonsBuilder {
+    Row(MenuButtonRow),
+    PerAsset { action: AssetButtonAction },
+}
+
+impl MenuButtonsBuilder {
+    fn build(&self, asset_server: &AssetServer) -> Vec<MenuButtonRow> {
+        match self {
+            MenuButtonsBuilder::Row(row) => vec![row.clone()],
+            MenuButtonsBuilder::PerAsset { action } => asset_server
+                .asset_io()
+                .read_directory(action.assets_path())
+                .unwrap_or_else(|_| Box::new(Vec::default().into_iter()))
+                .map(|path| {
+                    MenuButtonRow(vec![MenuButton {
+                        text: path.file_name().unwrap().to_string_lossy().to_string(),
+                        action: action.action(&path),
+                    }])
+                })
+                .collect(),
+        }
+    }
+}
+
 #[derive(Clone)]
 struct Menu {
-    title: String,
-    title_size: MenuTitleSize,
-    buttons: Vec<MenuButton>,
+    title: MenuTitle,
+    buttons: Vec<MenuButtonRow>,
 }
 
 const MENU_ITEM_MARGIN: Rect<Val> = Rect {
@@ -86,12 +148,12 @@ impl Menu {
                         ..default()
                     },
                     text: Text::with_section(
-                        self.title.clone(),
+                        self.title.text.clone(),
                         TextStyle {
                             font: fonts.font.clone(),
-                            font_size: match self.title_size {
+                            font_size: match self.title.size {
                                 MenuTitleSize::MainTitle => MENU_TITLE_SIZE,
-                                MenuTitleSize::Heading => MENU_HEADING_SIZE,
+                                MenuTitleSize::Normal => MENU_HEADING_SIZE,
                             },
                             color: MENU_TITLE_COLOR,
                         },
@@ -100,37 +162,59 @@ impl Menu {
                     ..default()
                 });
 
-                for button in &self.buttons {
-                    parent
-                        .spawn_bundle(ButtonBundle {
-                            style: Style {
-                                align_items: AlignItems::Center,
-                                justify_content: JustifyContent::Center,
-                                margin: MENU_ITEM_MARGIN.clone(),
-                                size: BUTTON_SIZE.clone(),
+                for row in &self.buttons {
+                    // TODO make this display in rows
+                    for button in &**row {
+                        parent
+                            .spawn_bundle(ButtonBundle {
+                                style: Style {
+                                    align_items: AlignItems::Center,
+                                    justify_content: JustifyContent::Center,
+                                    margin: MENU_ITEM_MARGIN.clone(),
+                                    size: BUTTON_SIZE.clone(),
+                                    ..default()
+                                },
+                                color: BUTTON_COLOR.into(),
                                 ..default()
-                            },
-                            color: BUTTON_COLOR.into(),
-                            ..default()
-                        })
-                        .insert(button.action.clone())
-                        .with_children(|parent| {
-                            parent.spawn_bundle(TextBundle {
-                                text: Text::with_section(
-                                    button.text.clone(),
-                                    TextStyle {
-                                        font: fonts.font.clone(),
-                                        font_size: BUTTON_TEXT_SIZE,
-                                        color: BUTTON_TEXT_COLOR,
-                                    },
-                                    default(),
-                                ),
-                                ..default()
+                            })
+                            .insert(button.action.clone())
+                            .with_children(|parent| {
+                                parent.spawn_bundle(TextBundle {
+                                    text: Text::with_section(
+                                        button.text.clone(),
+                                        TextStyle {
+                                            font: fonts.font.clone(),
+                                            font_size: BUTTON_TEXT_SIZE,
+                                            color: BUTTON_TEXT_COLOR,
+                                        },
+                                        default(),
+                                    ),
+                                    ..default()
+                                });
                             });
-                        });
+                    }
                 }
             })
             .id()
+    }
+}
+
+#[derive(Clone)]
+struct MenuBuilder {
+    title: MenuTitle,
+    buttons: Vec<MenuButtonsBuilder>,
+}
+
+impl MenuBuilder {
+    fn build(&self, asset_server: &AssetServer) -> Menu {
+        Menu {
+            title: self.title.clone(),
+            buttons: self
+                .buttons
+                .iter()
+                .flat_map(|buttons| buttons.build(asset_server))
+                .collect(),
+        }
     }
 }
 
@@ -138,40 +222,72 @@ impl Menu {
 struct MenuEs(Vec<Entity>);
 
 #[derive(Deref)]
-struct NextMenu(Menu);
+struct NextMenu(MenuBuilder);
 
 fn init_main_menu(mut commands: Commands, mut state: ResMut<State<GameState>>) {
     commands.spawn_bundle(UiCameraBundle::default());
 
-    commands.insert_resource(NextMenu(Menu {
-        title: "voxmod".to_string(),
-        title_size: MenuTitleSize::MainTitle,
+    commands.insert_resource(NextMenu(MenuBuilder {
+        title: MenuTitle {
+            text: "voxmod".to_string(),
+            size: MenuTitleSize::MainTitle,
+        },
         buttons: vec![
-            MenuButton {
+            MenuButtonsBuilder::Row(MenuButtonRow(vec![MenuButton {
                 text: "Play".to_string(),
-                action: Action::Menu(Menu {
-                    title: "Choose a world".to_string(),
-                    title_size: MenuTitleSize::Heading,
+                action: Action::Menu(MenuBuilder {
+                    title: MenuTitle {
+                        text: "Choose a world".to_string(),
+                        size: MenuTitleSize::Normal,
+                    },
                     buttons: vec![
-                        MenuButton {
-                            text: "Create World".to_string(),
-                            action: Action::Game,
+                        MenuButtonsBuilder::PerAsset {
+                            action: AssetButtonAction::Play,
                         },
-                        MenuButton {
-                            text: "Back".to_string(),
-                            action: Action::Back,
-                        },
+                        MenuButtonsBuilder::Row(MenuButtonRow(vec![
+                            MenuButton {
+                                text: "Back".to_string(),
+                                action: Action::Back,
+                            },
+                            MenuButton {
+                                text: "New world".to_string(),
+                                action: Action::Menu(MenuBuilder {
+                                    title: MenuTitle {
+                                        text: "New world".to_string(),
+                                        size: MenuTitleSize::Normal,
+                                    },
+                                    buttons: vec![
+                                        MenuButtonsBuilder::PerAsset {
+                                            action: AssetButtonAction::CreateWorld,
+                                        },
+                                        MenuButtonsBuilder::Row(MenuButtonRow(vec![
+                                            MenuButton {
+                                                text: "Back".to_string(),
+                                                action: Action::Back,
+                                            },
+                                            MenuButton {
+                                                text: "Import game".to_string(),
+                                                action: Action::Set(vec![
+                                                    Action::ImportGame,
+                                                    Action::Rebuild,
+                                                ]),
+                                            },
+                                        ])),
+                                    ],
+                                }),
+                            },
+                        ])),
                     ],
                 }),
-            },
-            MenuButton {
+            }])),
+            MenuButtonsBuilder::Row(MenuButtonRow(vec![MenuButton {
                 text: "Edit".to_string(),
-                action: Action::Game,
-            },
-            MenuButton {
+                action: Action::Back,
+            }])),
+            MenuButtonsBuilder::Row(MenuButtonRow(vec![MenuButton {
                 text: "Quit".to_string(),
                 action: Action::Back,
-            },
+            }])),
         ],
     }));
     state.push(GameState::Menu).unwrap();
@@ -183,8 +299,9 @@ fn init_menu(
     mut nodes: Query<&mut Style, With<Node>>,
     fonts: Res<Fonts>,
     next_menu: Res<NextMenu>,
+    asset_server: Res<AssetServer>,
 ) {
-    let menu_e = next_menu.spawn(&mut commands, &fonts);
+    let menu_e = next_menu.build(&asset_server).spawn(&mut commands, &fonts);
     if let Some(menu_es) = &mut menu_es {
         nodes.get_mut(*menu_es.last().unwrap()).unwrap().display = Display::None;
         menu_es.push(menu_e);
@@ -213,10 +330,11 @@ fn button_action(
                         state.push(GameState::Buffer).unwrap();
                     }
                     Action::Back => state.pop().unwrap(),
-                    Action::Game => {
+                    Action::Play(_) => {
                         commands.insert_resource(OpeningGame);
                         state.replace(GameState::Game).unwrap()
                     }
+                    _ => (), // TODO
                 }
                 BUTTON_PRESS_COLOR
             }
