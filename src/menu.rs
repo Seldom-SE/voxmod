@@ -105,7 +105,7 @@ impl MenuButtonsBuilder {
 #[derive(Clone)]
 struct Menu {
     title: MenuTitle,
-    buttons: Vec<MenuButtonRow>,
+    rows: Vec<MenuButtonRow>,
 }
 
 const MENU_ITEM_MARGIN: Rect<Val> = Rect {
@@ -117,9 +117,15 @@ const MENU_ITEM_MARGIN: Rect<Val> = Rect {
 const MENU_TITLE_SIZE: f32 = 100.;
 const MENU_HEADING_SIZE: f32 = 65.;
 const MENU_TITLE_COLOR: Color = Color::WHITE;
-const BUTTON_SIZE: Size<Val> = Size {
+const ROW_SIZE: Size<Val> = Size {
     width: Val::Percent(50.),
     height: Val::Px(50.),
+};
+const BUTTON_MARGIN: Rect<Val> = Rect {
+    left: Val::Px(10.),
+    right: Val::Px(10.),
+    top: Val::Percent(0.),
+    bottom: Val::Percent(0.),
 };
 const BUTTON_COLOR: Color = Color::WHITE;
 const BUTTON_HOVER_COLOR: Color = Color::rgb(0.75, 0.75, 0.75);
@@ -162,37 +168,48 @@ impl Menu {
                     ..default()
                 });
 
-                for row in &self.buttons {
-                    // TODO make this display in rows
-                    for button in &**row {
-                        parent
-                            .spawn_bundle(ButtonBundle {
-                                style: Style {
-                                    align_items: AlignItems::Center,
-                                    justify_content: JustifyContent::Center,
-                                    margin: MENU_ITEM_MARGIN.clone(),
-                                    size: BUTTON_SIZE.clone(),
-                                    ..default()
-                                },
-                                color: BUTTON_COLOR.into(),
+                for row in &self.rows {
+                    parent
+                        .spawn_bundle(NodeBundle {
+                            style: Style {
+                                margin: MENU_ITEM_MARGIN.clone(),
+                                size: ROW_SIZE.clone(),
                                 ..default()
-                            })
-                            .insert(button.action.clone())
-                            .with_children(|parent| {
-                                parent.spawn_bundle(TextBundle {
-                                    text: Text::with_section(
-                                        button.text.clone(),
-                                        TextStyle {
-                                            font: fonts.font.clone(),
-                                            font_size: BUTTON_TEXT_SIZE,
-                                            color: BUTTON_TEXT_COLOR,
+                            },
+                            color: Color::NONE.into(),
+                            ..default()
+                        })
+                        .with_children(|parent| {
+                            for button in &**row {
+                                parent
+                                    .spawn_bundle(ButtonBundle {
+                                        style: Style {
+                                            align_items: AlignItems::Center,
+                                            justify_content: JustifyContent::Center,
+                                            margin: BUTTON_MARGIN.clone(),
+                                            size: Size::new(Val::Percent(100.), Val::Percent(100.)),
+                                            ..default()
                                         },
-                                        default(),
-                                    ),
-                                    ..default()
-                                });
-                            });
-                    }
+                                        color: BUTTON_COLOR.into(),
+                                        ..default()
+                                    })
+                                    .insert(button.action.clone())
+                                    .with_children(|parent| {
+                                        parent.spawn_bundle(TextBundle {
+                                            text: Text::with_section(
+                                                button.text.clone(),
+                                                TextStyle {
+                                                    font: fonts.font.clone(),
+                                                    font_size: BUTTON_TEXT_SIZE,
+                                                    color: BUTTON_TEXT_COLOR,
+                                                },
+                                                default(),
+                                            ),
+                                            ..default()
+                                        });
+                                    });
+                            }
+                        });
                 }
             })
             .id()
@@ -209,7 +226,7 @@ impl MenuBuilder {
     fn build(&self, asset_server: &AssetServer) -> Menu {
         Menu {
             title: self.title.clone(),
-            buttons: self
+            rows: self
                 .buttons
                 .iter()
                 .flat_map(|buttons| buttons.build(asset_server))
